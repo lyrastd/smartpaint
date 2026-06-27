@@ -254,6 +254,183 @@ async function startServer() {
       return res.status(500).json({ error: "Erro ao processar a imagem gerada pelo modelo." });
     }
   });
+  app.post("/api/transform-selection", async (req, res) => {
+    const { croppedImage, contextImage, prompt, apiKey } = req.body;
+    if (!croppedImage) {
+      return res.status(400).json({ error: "Nenhum desenho selecionado foi enviado para a IA." });
+    }
+    const activeKey = apiKey || process.env.GEMINI_API_KEY;
+    if (!activeKey) {
+      return res.status(400).json({
+        error: "Chave de API do Gemini n\xE3o encontrada. Configure a sua chave de API do Gemini no painel para usar a transforma\xE7\xE3o por IA."
+      });
+    }
+    const aiClient = new import_genai.GoogleGenAI({
+      apiKey: activeKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
+    const parseBase64 = (dataUrl) => {
+      let data = dataUrl;
+      let mimeType = "image/png";
+      if (dataUrl.startsWith("data:")) {
+        const matches = dataUrl.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+        if (matches && matches.length === 3) {
+          mimeType = matches[1];
+          data = matches[2];
+        }
+      }
+      return { data, mimeType };
+    };
+    const parsedCropped = parseBase64(croppedImage);
+    const parsedContext = contextImage ? parseBase64(contextImage) : null;
+    const directPromptText = `Voc\xEA \xE9 um transformador inteligente de tra\xE7os selecionados em imagens realistas.
+A primeira imagem \xE9 a croppedSelection, que \xE9 o desenho que o usu\xE1rio selecionou e quer que voc\xEA transforme de acordo com o seguinte comando: "${prompt}".
+A segunda imagem \xE9 a contextImage, que mostra todo o desenho ao redor da sele\xE7\xE3o para dar contexto de estilo, ilumina\xE7\xE3o, cores e \xE2ngulo.
+Sua miss\xE3o \xE9 transformar a croppedSelection em um objeto fotorrealista completo baseado no comando do usu\xE1rio, harmonizando com o estilo e as cores vistos na contextImage.
+MUITO IMPORTANTE: Renderize o objeto final gerado sobre um fundo BRANCO completamente s\xF3lido e liso (#ffffff) sem sombras de fundo, molduras ou elementos adicionais. Isso \xE9 essencial para podermos isolar o objeto com fundo transparente na tela de pintura.`;
+    const imageModels = ["gemini-2.5-flash-image", "gemini-3.1-flash-image"];
+    let lastImageError = null;
+    let response = null;
+    for (const imageModel of imageModels) {
+      try {
+        const contentsParts = [
+          {
+            inlineData: {
+              data: parsedCropped.data,
+              mimeType: parsedCropped.mimeType
+            }
+          }
+        ];
+        if (parsedContext) {
+          contentsParts.push({
+            inlineData: {
+              data: parsedContext.data,
+              mimeType: parsedContext.mimeType
+            }
+          });
+        }
+        contentsParts.push({ text: directPromptText });
+        response = await aiClient.models.generateContent({
+          model: imageModel,
+          contents: { parts: contentsParts },
+          config: {
+            imageConfig: {
+              aspectRatio: "1:1"
+            }
+          }
+        });
+        if (response) {
+          lastImageError = null;
+          break;
+        }
+      } catch (error) {
+        console.warn(`Direct selection image generation failed for model ${imageModel}:`, error);
+        lastImageError = error;
+      }
+    }
+    if (!response) {
+      console.log("Direct image generation failed or unavailable. Activating selection-based Intelligent Hybrid Fallback...");
+      try {
+        const textModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash"];
+        let descriptionResponse = null;
+        let lastTextModelError = null;
+        const fallbackPromptText = `Analise as duas imagens enviadas:
+1. croppedSelection (o desenho selecionado pelo usu\xE1rio).
+2. contextImage (o desenho completo ao redor para te dar contexto geral de \xE2ngulo, cores e ilumina\xE7\xE3o).
+O usu\xE1rio quer transformar os tra\xE7os da croppedSelection em um objeto realista correspondente a: "${prompt}".
+Escreva um prompt de gera\xE7\xE3o de imagem em ingl\xEAs extremamente descritivo, rico em detalhes, que represente esse objeto realista transformado.
+O prompt gerado deve OBRIGATORIAMENTE herdar as cores, ilumina\xE7\xE3o e posicionamento apropriados da contextImage.
+REQUISITO CRUCIAL: O prompt deve solicitar explicitamente que o objeto seja gerado centralizado e isolado sobre um fundo BRANCO s\xF3lido, limpo e impec\xE1vel ("solid, clean, plain white background, #ffffff"), sem nenhuma sombra no fundo, vinheta, molduras ou outros elementos ao redor, para que possamos torn\xE1-lo transparente.
+Escreva APENAS o prompt gerado em ingl\xEAs, em um \xFAnico par\xE1grafo curto, sem nenhuma palavra de introdu\xE7\xE3o ou formata\xE7\xE3o Markdown.`;
+        for (const textModel of textModels) {
+          try {
+            const contentsParts = [
+              {
+                inlineData: {
+                  data: parsedCropped.data,
+                  mimeType: parsedCropped.mimeType
+                }
+              }
+            ];
+            if (parsedContext) {
+              contentsParts.push({
+                inlineData: {
+                  data: parsedContext.data,
+                  mimeType: parsedContext.mimeType
+                }
+              });
+            }
+            contentsParts.push({ text: fallbackPromptText });
+            descriptionResponse = await aiClient.models.generateContent({
+              model: textModel,
+              contents: contentsParts
+            });
+            if (descriptionResponse && descriptionResponse.text) {
+              lastTextModelError = null;
+              break;
+            }
+          } catch (err) {
+            console.warn(`Fallback text model ${textModel} failed:`, err);
+            lastTextModelError = err;
+          }
+        }
+        if (!descriptionResponse || !descriptionResponse.text) {
+          throw lastTextModelError || new Error("N\xE3o foi poss\xEDvel analisar as imagens de sele\xE7\xE3o com o Gemini.");
+        }
+        const generatedPrompt = descriptionResponse.text.trim();
+        console.log("Generated prompt for selection with Pollinations:", generatedPrompt);
+        const pollinationUrl = `https://image.pollinations.ai/p/${encodeURIComponent(generatedPrompt)}?width=512&height=512&nologo=true&seed=${Math.floor(Math.random() * 1e6)}`;
+        console.log("Fetching selection from Pollinations:", pollinationUrl);
+        const imgRes = await fetch(pollinationUrl);
+        if (!imgRes.ok) {
+          throw new Error(`Erro ao gerar imagem de sele\xE7\xE3o com Pollinations (Status ${imgRes.status}).`);
+        }
+        const buffer = await imgRes.arrayBuffer();
+        const generatedBase64 = Buffer.from(buffer).toString("base64");
+        return res.json({
+          success: true,
+          image: `data:image/png;base64,${generatedBase64}`,
+          feedback: `Sua sele\xE7\xE3o foi processada com sucesso de forma gratuita! A IA analisou o contexto do seu desenho e gerou uma vers\xE3o integrada.`
+        });
+      } catch (fallbackError) {
+        console.error("Fallback hybrid flow failed for selection:", fallbackError);
+        const finalErrorMsg = lastImageError?.message || fallbackError.message || "Erro desconhecido na gera\xE7\xE3o h\xEDbrida de sele\xE7\xE3o.";
+        return res.status(500).json({ error: `Ocorreu um erro ao processar a transforma\xE7\xE3o de sele\xE7\xE3o por IA: ${finalErrorMsg}` });
+      }
+    }
+    try {
+      let generatedBase64 = null;
+      let textFeedback = "";
+      if (response?.candidates?.[0]?.content?.parts) {
+        for (const part of response.candidates[0].content.parts) {
+          if (part.inlineData) {
+            generatedBase64 = part.inlineData.data;
+          } else if (part.text) {
+            textFeedback += part.text;
+          }
+        }
+      }
+      if (generatedBase64) {
+        return res.json({
+          success: true,
+          image: `data:image/png;base64,${generatedBase64}`,
+          feedback: textFeedback || "Sua sele\xE7\xE3o foi transformada com sucesso!"
+        });
+      } else {
+        return res.status(500).json({
+          error: "O modelo interpretou o desenho mas n\xE3o conseguiu gerar uma nova imagem de sele\xE7\xE3o.",
+          textResponse: textFeedback
+        });
+      }
+    } catch (error) {
+      console.error("Processing selection image failed:", error);
+      return res.status(500).json({ error: "Erro ao processar a imagem de sele\xE7\xE3o gerada pelo modelo." });
+    }
+  });
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
       server: { middlewareMode: true },
