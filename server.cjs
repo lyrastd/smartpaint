@@ -431,6 +431,128 @@ Escreva APENAS o prompt gerado em ingl\xEAs, em um \xFAnico par\xE1grafo curto, 
       return res.status(500).json({ error: "Erro ao processar a imagem de sele\xE7\xE3o gerada pelo modelo." });
     }
   });
+  app.post("/api/generate-sketch", async (req, res) => {
+    const { prompt, apiKey } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ error: "Nenhum comando de desenho foi fornecido." });
+    }
+    const activeKey = apiKey || process.env.GEMINI_API_KEY;
+    if (!activeKey) {
+      return res.status(400).json({
+        error: "Chave de API do Gemini n\xE3o encontrada. Configure a sua chave de API do Gemini no painel para usar a IA desenhista."
+      });
+    }
+    const aiClient = new import_genai.GoogleGenAI({
+      apiKey: activeKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
+    const systemInstruction = `You are a professional human sketch artist drawing on a 1000x700 canvas.
+Your task is to translate natural language prompts into elegant, organic, and imperfect hand-drawn "pencil" strokes with extreme structural precision.
+Guidelines:
+1. Do not use perfect geometric primitive math structures. Generate slightly uneven, sketchy, human-like contours that represent the subject beautifully.
+2. The canvas coordinate system is 1000 wide by 700 high. Center your drawing nicely in the middle (typically within X: 150 to 850, Y: 80 to 620).
+3. To ensure fast, reliable, and smooth JSON delivery, represent the drawing using 15 to 40 strokes.
+4. Each stroke must contain a continuous sequence of 6 to 30 closely-spaced sequential points that trace a line, curve, outline, or detail. Denser and closer points will be drawn with extreme high-fidelity precision.
+5. Prioritize perfect structural alignments and connections. If drawing a cat, ensure the eyes are placed precisely within the head outline, whiskers connect directly to cheeks, and all body parts line up accurately without gaps.
+6. Use beautiful, colorful strokes when appropriate (e.g., green for trees, yellow for sun, pink/red for flowers/hearts, blue/cyan for water, orange/brown for animals, black or purple for accents/shadows) by specifying a CSS hex color in the 'color' field of the stroke. Use a wide range of gorgeous colors to make the sketch extremely vibrant and beautiful.`;
+    try {
+      let responseText = "";
+      let lastError = null;
+      const modelsToTry = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+      for (const modelName of modelsToTry) {
+        let attempts = 3;
+        for (let attempt = 1; attempt <= attempts; attempt++) {
+          try {
+            console.log(`Tentando gerar desenho com o modelo ${modelName} (tentativa ${attempt}/${attempts})...`);
+            const response = await aiClient.models.generateContent({
+              model: modelName,
+              contents: `Desenhe de forma colorida, fofa e detalhada \xE0 l\xE1pis: "${prompt}"`,
+              config: {
+                systemInstruction,
+                responseMimeType: "application/json",
+                responseSchema: {
+                  type: import_genai.Type.OBJECT,
+                  properties: {
+                    description: {
+                      type: import_genai.Type.STRING,
+                      description: "A short Portuguese description of what you are drawing"
+                    },
+                    strokes: {
+                      type: import_genai.Type.ARRAY,
+                      description: "Array of hand-drawn strokes",
+                      items: {
+                        type: import_genai.Type.OBJECT,
+                        properties: {
+                          points: {
+                            type: import_genai.Type.ARRAY,
+                            description: "Sequence of points for a continuous pencil stroke line",
+                            items: {
+                              type: import_genai.Type.OBJECT,
+                              properties: {
+                                x: { type: import_genai.Type.INTEGER },
+                                y: { type: import_genai.Type.INTEGER }
+                              },
+                              required: ["x", "y"]
+                            }
+                          },
+                          color: {
+                            type: import_genai.Type.STRING,
+                            description: "The CSS hex color for this stroke (e.g. '#ef4444', '#22c55e', '#3b82f6', '#eab308', etc.)"
+                          }
+                        },
+                        required: ["points"]
+                      }
+                    }
+                  },
+                  required: ["strokes"]
+                }
+              }
+            });
+            if (response && response.text) {
+              responseText = response.text.trim();
+              break;
+            } else {
+              throw new Error("O modelo n\xE3o retornou nenhum texto.");
+            }
+          } catch (error) {
+            lastError = error;
+            console.error(`Tentativa ${attempt} com ${modelName} falhou:`, error.message || error);
+            const isRateLimitOrBusy = error.message?.includes("503") || error.message?.includes("UNAVAILABLE") || error.message?.includes("429") || JSON.stringify(error).includes("503") || JSON.stringify(error).includes("UNAVAILABLE") || JSON.stringify(error).includes("429");
+            if (isRateLimitOrBusy && attempt < attempts) {
+              const delay = attempt * 1200;
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            } else {
+              break;
+            }
+          }
+        }
+        if (responseText) {
+          break;
+        }
+      }
+      if (responseText) {
+        const jsonResult = JSON.parse(responseText);
+        return res.json({
+          success: true,
+          description: jsonResult.description || `Desenho de: ${prompt}`,
+          strokes: jsonResult.strokes || []
+        });
+      } else {
+        throw lastError || new Error("N\xE3o foi poss\xEDvel obter resposta de nenhum modelo Gemini.");
+      }
+    } catch (error) {
+      console.error("Sketch generation failed completely:", error);
+      let errMsg = error.message || "Erro desconhecido ao gerar o desenho.";
+      if (errMsg.includes("UNAVAILABLE") || errMsg.includes("503")) {
+        errMsg = "Os servidores do Gemini est\xE3o ocupados no momento devido \xE0 alta demanda. Por favor, tente novamente em alguns segundos.";
+      }
+      return res.status(500).json({ error: errMsg });
+    }
+  });
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
       server: { middlewareMode: true },
