@@ -432,7 +432,7 @@ Escreva APENAS o prompt gerado em ingl\xEAs, em um \xFAnico par\xE1grafo curto, 
     }
   });
   app.post("/api/generate-sketch", async (req, res) => {
-    const { prompt, apiKey } = req.body;
+    const { prompt, apiKey, contextImage } = req.body;
     if (!prompt) {
       return res.status(400).json({ error: "Nenhum comando de desenho foi fornecido." });
     }
@@ -451,14 +451,16 @@ Escreva APENAS o prompt gerado em ingl\xEAs, em um \xFAnico par\xE1grafo curto, 
       }
     });
     const systemInstruction = `You are a professional human sketch artist drawing on a 1000x700 canvas.
-Your task is to translate natural language prompts into elegant, organic, and imperfect hand-drawn "pencil" strokes with extreme structural precision.
+Your task is to translate natural language prompts into beautiful hand-drawn "pencil" strokes, lines, rectangles, circles, triangles, arrows, or text labels, depending on what works best for the requested design.
 Guidelines:
-1. Do not use perfect geometric primitive math structures. Generate slightly uneven, sketchy, human-like contours that represent the subject beautifully.
+1. You can generate freehand curves ('pencil') OR vector shape primitives ('line', 'rectangle', 'circle', 'triangle', 'arrow', 'text'). Choose whatever shapes and styles represent the subject beautifully and precisely.
 2. The canvas coordinate system is 1000 wide by 700 high. Center your drawing nicely in the middle (typically within X: 150 to 850, Y: 80 to 620).
-3. To ensure fast, reliable, and smooth JSON delivery, represent the drawing using 15 to 40 strokes.
-4. Each stroke must contain a continuous sequence of 6 to 30 closely-spaced sequential points that trace a line, curve, outline, or detail. Denser and closer points will be drawn with extreme high-fidelity precision.
-5. Prioritize perfect structural alignments and connections. If drawing a cat, ensure the eyes are placed precisely within the head outline, whiskers connect directly to cheeks, and all body parts line up accurately without gaps.
-6. Use beautiful, colorful strokes when appropriate (e.g., green for trees, yellow for sun, pink/red for flowers/hearts, blue/cyan for water, orange/brown for animals, black or purple for accents/shadows) by specifying a CSS hex color in the 'color' field of the stroke. Use a wide range of gorgeous colors to make the sketch extremely vibrant and beautiful.`;
+3. To ensure fast, reliable, and smooth JSON delivery, represent the drawing using 15 to 45 items in the 'strokes' array.
+4. For 'pencil' strokes, provide a continuous sequence of 8 to 40 closely-spaced sequential points that trace a curve or details. Denser and closer points will make the strokes extremely high resolution and fluid.
+5. For geometric shape primitives ('rectangle', 'circle', 'line', 'triangle', 'arrow'), provide EXACTLY 2 points in the 'points' array representing the primary bounds or vertices (e.g., points[0] is start/corner, points[1] is end/opposite corner).
+6. For 'text' elements, provide EXACTLY 1 point in the 'points' array (representing the start/top-left placement), and fill the 'text' field with the short text label.
+7. Use beautiful, colorful strokes when appropriate by specifying a CSS hex color in the 'color' field (e.g., green for trees, yellow for sun, pink/red for flowers/hearts, blue/cyan for water, orange/brown for animals, black or purple for accents/shadows). Use a wide range of gorgeous colors to make the sketch extremely vibrant and beautiful.
+8. If drawing a cohesive scene, align your elements perfectly in 2D space without gaps. Ensure parts connect accurately.`;
     try {
       let responseText = "";
       let lastError = null;
@@ -468,9 +470,23 @@ Guidelines:
         for (let attempt = 1; attempt <= attempts; attempt++) {
           try {
             console.log(`Tentando gerar desenho com o modelo ${modelName} (tentativa ${attempt}/${attempts})...`);
+            const contentsParts = [];
+            if (contextImage) {
+              const matches = contextImage.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+              if (matches) {
+                contentsParts.push({
+                  inlineData: {
+                    mimeType: matches[1],
+                    data: matches[2]
+                  }
+                });
+              }
+            }
+            const promptText = contextImage ? `Voc\xEA est\xE1 visualizando o desenho atual da tela de pintura (fornecido acima). Desenhe de forma colorida, fofa, detalhada e rica \xE0 l\xE1pis/formas: "${prompt}". Integre perfeitamente o novo desenho ao contexto, conte\xFAdo e elementos existentes no desenho atual na tela, complementando ou interagindo com ele de forma inteligente.` : `Desenhe de forma colorida, fofa e detalhada \xE0 l\xE1pis/formas: "${prompt}"`;
+            contentsParts.push({ text: promptText });
             const response = await aiClient.models.generateContent({
               model: modelName,
-              contents: `Desenhe de forma colorida, fofa e detalhada \xE0 l\xE1pis: "${prompt}"`,
+              contents: contentsParts,
               config: {
                 systemInstruction,
                 responseMimeType: "application/json",
@@ -483,13 +499,17 @@ Guidelines:
                     },
                     strokes: {
                       type: import_genai.Type.ARRAY,
-                      description: "Array of hand-drawn strokes",
+                      description: "Array of drawing elements (strokes, shapes, or text annotations)",
                       items: {
                         type: import_genai.Type.OBJECT,
                         properties: {
+                          type: {
+                            type: import_genai.Type.STRING,
+                            description: "Type of shape: 'pencil' (default freehand brush/line), 'line', 'rectangle', 'circle', 'triangle', 'arrow', or 'text'"
+                          },
                           points: {
                             type: import_genai.Type.ARRAY,
-                            description: "Sequence of points for a continuous pencil stroke line",
+                            description: "Sequence of points. For 'pencil', a path of 8-40 points. For geometric primitives, exactly 2 points (starting and ending/opposite corner). For 'text', exactly 1 point.",
                             items: {
                               type: import_genai.Type.OBJECT,
                               properties: {
@@ -501,7 +521,15 @@ Guidelines:
                           },
                           color: {
                             type: import_genai.Type.STRING,
-                            description: "The CSS hex color for this stroke (e.g. '#ef4444', '#22c55e', '#3b82f6', '#eab308', etc.)"
+                            description: "The CSS hex color for this element (e.g. '#ef4444', '#22c55e', '#3b82f6', '#eab308', etc.)"
+                          },
+                          text: {
+                            type: import_genai.Type.STRING,
+                            description: "The string text content if type is 'text'"
+                          },
+                          width: {
+                            type: import_genai.Type.NUMBER,
+                            description: "The thickness/width of the stroke (1 to 5) or font size (for text, 12 to 32)"
                           }
                         },
                         required: ["points"]
