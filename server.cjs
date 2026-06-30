@@ -450,21 +450,32 @@ Escreva APENAS o prompt gerado em ingl\xEAs, em um \xFAnico par\xE1grafo curto, 
         }
       }
     });
-    const systemInstruction = `You are a professional human sketch artist drawing on a 1000x700 canvas.
-Your task is to translate natural language prompts into beautiful hand-drawn "pencil" strokes, lines, rectangles, circles, triangles, arrows, or text labels, depending on what works best for the requested design.
-Guidelines:
-1. You can generate freehand curves ('pencil') OR vector shape primitives ('line', 'rectangle', 'circle', 'triangle', 'arrow', 'text'). Choose whatever shapes and styles represent the subject beautifully and precisely.
-2. The canvas coordinate system is 1000 wide by 700 high. Center your drawing nicely in the middle (typically within X: 150 to 850, Y: 80 to 620).
-3. To ensure fast, reliable, and smooth JSON delivery, represent the drawing using 15 to 45 items in the 'strokes' array.
-4. For 'pencil' strokes, provide a continuous sequence of 8 to 40 closely-spaced sequential points that trace a curve or details. Denser and closer points will make the strokes extremely high resolution and fluid.
-5. For geometric shape primitives ('rectangle', 'circle', 'line', 'triangle', 'arrow'), provide EXACTLY 2 points in the 'points' array representing the primary bounds or vertices (e.g., points[0] is start/corner, points[1] is end/opposite corner).
-6. For 'text' elements, provide EXACTLY 1 point in the 'points' array (representing the start/top-left placement), and fill the 'text' field with the short text label.
-7. Use beautiful, colorful strokes when appropriate by specifying a CSS hex color in the 'color' field (e.g., green for trees, yellow for sun, pink/red for flowers/hearts, blue/cyan for water, orange/brown for animals, black or purple for accents/shadows). Use a wide range of gorgeous colors to make the sketch extremely vibrant and beautiful.
-8. If drawing a cohesive scene, align your elements perfectly in 2D space without gaps. Ensure parts connect accurately.`;
+    const systemInstruction = `You are an extremely talented, professional human adult sketch artist and master illustrator drawing on a 1000x700 canvas.
+Your task is to translate natural language prompts into stunning, organic, hand-drawn "pencil" or "brush" sketches. You draw with cohesive structure, beautiful proportions, and professional artistic care.
+
+CRITICAL DESIGN RULES:
+1. NO Childish/Uncoordinated Drawings: Do NOT place random floating shapes (like simple unconnected rectangles, circles, or triangles) that make the drawing look like a toddler did it. Everything must be structurally cohesive and perfectly aligned!
+   - If drawing a house: draw the main walls, roof slopes, doors, windows, and chimney as a SINGLE, connected, integrated structure. Do NOT use abstract mathematical shape primitives ('triangle', 'circle') if they won't touch or fit nicely. Prefer drawing them organically with 'pencil' or 'brush' lines so the roof lines touch the walls perfectly and look hand-drawn.
+   - If drawing a scene with a sun or sky: draw exactly ONE sun (e.g. at top-right, x=850, y=100) and gracefully integrate it. Do NOT duplicate suns or draw weird triangles inside them.
+   - Avoid drawing simple, childish "puffy clouds" with single circular outlines or simple "stick-figure" suns with spokes. Instead, sketch them with realistic, artistic, cross-hatched, or multi-layered professional strokes.
+   - Make all structures, doors, windows, and decorative patterns align correctly. Do NOT add weird floating shapes or random curved petals/leaves inside structures unless they are actual decorative architectural elements requested.
+2. Drawing Style & Line Quality: Draw with the natural, fluid, expressive, continuous strokes of a professional human hand. Use 'pencil' or 'brush' for outlines, details, brick textures, grass patterns, wood grains, or tree foliage.
+3. Cohesive Colors & Contrast: Use a beautiful, cohesive, professional palette. Assign meaningful, rich CSS hex colors:
+   - Deep charcoal (#1f2937) or black (#000000) for clean master outlines and fine details.
+   - Rich organic colors (e.g., #b45309 for wooden roofs/doors, #15803d for green grass/foliage, #eab308 for a golden sun, #0284c7 for sky/water, #e11d48 for brick walls or flowers).
+   - Use vibrant, harmonious colors so the drawing looks complete and finished!
+4. Scene Completeness & Background (Context Rule):
+   - If the canvas is empty: Create a full, rich, complete master illustration! Incorporate the requested item into an appropriate background, setting, or scenery (e.g., if requested "gatinho", draw the cute kitten but also add beautiful floor boards, a bowl of milk, a small ball of yarn, a window with curtains, sunbeams, grass, or clouds) to make a finished artistic piece.
+   - If there is already a drawing on the canvas (Context Image is supplied):
+     - Carefully analyze what is already drawn.
+     - DO NOT replicate, copy, or redraw the existing objects!
+     - Instead, continue and expand the drawing! Add only the new requested elements, positioning them naturally relative to what is already on the canvas (e.g., if there's a house, draw a tree or a person standing NEXT to it, perfectly integrated with the scene!).
+5. Technical Coordinates: The canvas is 1000 wide by 700 high. Center and size your drawing nicely to fill the workspace professionally.
+6. Strokes & Paths: For 'pencil' or 'brush' strokes, provide a sequence of 8 to 40 sequential points. Ensure points are close enough for ultra-high resolution and continuous drawing. Represent the scene with 20 to 60 total strokes/shapes. Do not exceed 60 strokes.`;
     try {
       let responseText = "";
       let lastError = null;
-      const modelsToTry = ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"];
+      const modelsToTry = ["gemini-3.1-pro-preview", "gemini-2.5-flash", "gemini-3.5-flash", "gemini-flash-latest"];
       for (const modelName of modelsToTry) {
         let attempts = 3;
         for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -482,7 +493,9 @@ Guidelines:
                 });
               }
             }
-            const promptText = contextImage ? `Voc\xEA est\xE1 visualizando o desenho atual da tela de pintura (fornecido acima). Desenhe de forma colorida, fofa, detalhada e rica \xE0 l\xE1pis/formas: "${prompt}". Integre perfeitamente o novo desenho ao contexto, conte\xFAdo e elementos existentes no desenho atual na tela, complementando ou interagindo com ele de forma inteligente.` : `Desenhe de forma colorida, fofa e detalhada \xE0 l\xE1pis/formas: "${prompt}"`;
+            const isCute = /fof[oa]|infantil|criança|crianças|kawaii|gatinho|bebe|bebê|fofura|brinquedo/i.test(prompt);
+            const styleAdjectives = isCute ? "colorida, fofa, simp\xE1tica e divertida" : "art\xEDstica, profissional, proporcional, bem estruturada, realista, limpa e detalhada";
+            const promptText = contextImage ? `Voc\xEA est\xE1 visualizando o desenho atual da tela de pintura (fornecido acima). Desenhe de forma ${styleAdjectives} \xE0 l\xE1pis/formas: "${prompt}". Integre perfeitamente o novo desenho ao contexto, conte\xFAdo e elementos existentes no desenho atual na tela, complementando ou interagindo com ele de forma inteligente.` : `Desenhe de forma ${styleAdjectives} \xE0 l\xE1pis/formas: "${prompt}"`;
             contentsParts.push({ text: promptText });
             const response = await aiClient.models.generateContent({
               model: modelName,
@@ -505,7 +518,7 @@ Guidelines:
                         properties: {
                           type: {
                             type: import_genai.Type.STRING,
-                            description: "Type of shape: 'pencil' (default freehand brush/line), 'line', 'rectangle', 'circle', 'triangle', 'arrow', or 'text'"
+                            description: "Type of shape: 'pencil' (default freehand pencil/line), 'brush' (soft paintbrush), 'bucket' (flood fill starting at points[0]), 'line', 'rectangle', 'circle', 'triangle', 'arrow', or 'text'"
                           },
                           points: {
                             type: import_genai.Type.ARRAY,
